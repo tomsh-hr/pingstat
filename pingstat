@@ -1,0 +1,562 @@
+#!/bin/bash
+
+# If running as root, warn and exit
+if [[ $EUID -eq 0 ]]; then
+  echo "ERROR: This script is not intended to be run as root (sudo)."
+  echo "Please run as a normal user."
+  exit 1
+fi
+
+###############################################################################
+# 1) Configuration Paths & Global Variables
+###############################################################################
+SCRIPT_PATH=$(realpath "$0" 2>/dev/null || command -v pingstat)
+
+# Define possible version locations
+VERSION_PATHS=(
+    "$HOME/.local/share/pingstat/VERSION"
+    "/usr/share/pingstat/VERSION"
+)
+
+# Determine the current installed version
+for path in "${VERSION_PATHS[@]}"; do
+    if [[ -f "$path" ]]; then
+        VERSION=$(cat "$path" 2>/dev/null)
+        VERSION_PATH="$path"
+        break
+    fi
+done
+
+# If no version was found, warn the user
+if [[ -z "$VERSION" ]]; then
+    echo "WARNING: Unable to determine the installed version."
+    echo "Try running: pingstat --update"
+    VERSION="unknown"
+fi
+
+# XDG-based config & data paths
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/pingstat"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/pingstat"
+CONFIG_FILE="$CONFIG_DIR/servers.conf"
+
+# Ensure directories exist
+mkdir -p "$CONFIG_DIR" "$DATA_DIR"
+
+# Latest version from remote
+if command -v curl >/dev/null 2>&1; then
+    LATEST_VERSION=$(curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/VERSION")
+else
+    LATEST_VERSION=$(wget -qO- "https://codeberg.org/tomsh/pingstat/raw/branch/main/VERSION")
+fi
+
+###############################################################################
+# 2) Version Checking & Update
+###############################################################################
+check_version() {
+    echo "Current version: $VERSION"
+    if [ "$VERSION" != "$LATEST_VERSION" ]; then
+        echo "New version available: $LATEST_VERSION"
+        echo "Run: 'pingstat --update' to update."
+    else
+        echo "You are running the latest version!"
+    fi
+}
+
+update_pingstat() {
+    if [ "$VERSION" != "$LATEST_VERSION" ]; then
+        echo "Updating to version $LATEST_VERSION..."
+
+        # Detect installation type (system-wide or local)
+        if [[ "$SCRIPT_PATH" =~ ^/usr/bin/ ]]; then
+            VERSION_DEST="/usr/share/pingstat/VERSION"
+            USE_SUDO="sudo"
+        else
+            VERSION_DEST="$HOME/.local/share/pingstat/VERSION"
+            USE_SUDO=""
+        fi
+
+        echo "Updating binary at: $SCRIPT_PATH"
+
+        # Download and replace the binary
+        if command -v curl >/dev/null 2>&1; then
+            $USE_SUDO curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/pingstat" -o "$SCRIPT_PATH"
+        else
+            $USE_SUDO wget -qO "$SCRIPT_PATH" "https://codeberg.org/tomsh/pingstat/raw/branch/main/pingstat"
+        fi
+        $USE_SUDO chmod +x "$SCRIPT_PATH"
+
+        # Download the latest version file
+        if command -v curl >/dev/null 2>&1; then
+            $USE_SUDO curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/VERSION" -o "$VERSION_DEST"
+        else
+            $USE_SUDO wget -qO "$VERSION_DEST" "https://codeberg.org/tomsh/pingstat/raw/branch/main/VERSION"
+        fi
+
+        # Reload the new version info
+        VERSION=$(cat "$VERSION_DEST" 2>/dev/null || echo "unknown")
+        echo "Update complete! Running version: $VERSION"
+        exit 0
+    else
+        echo "You are already running the latest version!"
+        exit 0
+    fi
+}
+
+###############################################################################
+# 3) Uninstall Function
+###############################################################################
+uninstall_pingstat() {
+    echo "Uninstalling pingstat..."
+
+    # Determine if sudo is needed (only for system-wide installs)
+    USE_SUDO=""
+    if [[ -f "$SCRIPT_PATH" && ($(stat -c "%U" "$SCRIPT_PATH" 2>/dev/null) == "root" || "$SCRIPT_PATH" =~ ^/usr/bin/) ]]; then
+        USE_SUDO="sudo"
+    fi
+
+    # Remove binary
+    [ -f "$SCRIPT_PATH" ] && $USE_SUDO rm -f "$SCRIPT_PATH" && echo "Removed $SCRIPT_PATH"
+
+    for VERSION in "${VERSION_PATHS[@]}"; do
+        [ -f "$VERSION" ] && $USE_SUDO rm -f "$VERSION" && echo "Removed $VERSION"
+    done
+
+    # Remove config & data directories
+    [ -d "$CONFIG_DIR" ] && rm -rf "$CONFIG_DIR" && echo "Removed $CONFIG_DIR"
+    [ -d "$DATA_DIR" ] && rm -rf "$DATA_DIR" && echo "Removed $DATA_DIR"
+
+    echo "Uninstallation complete."
+    exit 0
+}
+
+###############################################################################
+# 4) Usage (Help) Function
+###############################################################################
+usage() {
+    cat <<EOF
+Usage: pingstat [command] [options]
+
+Server Management:
+  add <server>         Add a server to the config list.
+  remove <server>      Remove a server from the config list.
+  list                 List all servers in the config.
+
+Ping & Stats:
+  -p                   Ping all servers (or one with -s).
+  -d [N]               Show daily stats for last N days (default 20).
+  -m [N]               Show monthly stats for last N months (default 12).
+  -s <server>          Specify a single server for -p, -d, or -m.
+
+Other Options:
+  --version            Show current version.
+  --update             Update pingstat if a new version is available.
+  --uninstall          Uninstall pingstat entirely.
+  -h, --help           Show this help message.
+EOF
+}
+
+###############################################################################
+# 5) Config Handling
+###############################################################################
+read_config() {
+    [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE" 2>/dev/null
+}
+
+write_config() {
+    cat <<EOF > "$CONFIG_FILE"
+SERVERS="$SERVERS"
+EOF
+}
+
+###############################################################################
+# 6) Server Management Functions
+###############################################################################
+get_db_path() {
+    echo "$DATA_DIR/$1.db"
+}
+
+add_server() {
+    local srv="$1"
+    local response
+    local new_srv
+
+    # Check if the server is already in the config
+    IFS=' ' read -ra SRV_ARR <<< "$SERVERS"
+    for s in "${SRV_ARR[@]}"; do
+        if [ "$s" = "$srv" ]; then
+            echo "Server '$srv' is already in the config."
+            return
+        fi
+    done
+
+    # Ping test: use a single ping request with a short timeout.
+    if ! ping -c 1 -W 3 "$srv" &>/dev/null; then
+        echo "Ping to '$srv' failed."
+        while true; do
+            echo "Options: [A]dd it anyway, [N]ew address, or [C]ancel"
+            read -p "Your choice (a,d,c): " response
+            case "$response" in
+                [Aa]* )
+                    echo "Adding '$srv' despite ping failure."
+                    break
+                    ;;
+                [Nn]* )
+                    read -p "Enter a new server address: " new_srv
+                    # Replace current srv with the new one and retest
+                    srv="$new_srv"
+                    if ping -c 1 -W 3 "$srv" &>/dev/null; then
+                        echo "Ping to '$srv' succeeded."
+                        break
+                    else
+                        echo "Ping to '$srv' still failed. Try again or choose another option."
+                    fi
+                    ;;
+                [Cc]* )
+                    echo "Addition cancelled."
+                    return
+                    ;;
+                * )
+                    echo "Please answer A, N, or C."
+                    ;;
+            esac
+        done
+    fi
+
+    # If we reach here, add the (possibly updated) server.
+    IFS=' ' read -ra SRV_ARR <<< "$SERVERS"
+    SRV_ARR+=("$srv")
+    SERVERS="${SRV_ARR[*]}"
+    write_config
+    echo "Added server '$srv'."
+}
+
+remove_server() {
+    local srv="$1"
+    IFS=' ' read -ra SRV_ARR <<< "$SERVERS"
+    local NEW_ARR=()
+    local found=0
+    for s in "${SRV_ARR[@]}"; do
+        if [ "$s" = "$srv" ]; then
+            found=1
+            continue
+        fi
+        NEW_ARR+=("$s")
+    done
+
+    if [ "$found" -eq 1 ]; then
+        SERVERS="${NEW_ARR[*]}"
+        write_config
+        echo "Removed server '$srv'."
+    else
+        echo "Server '$srv' not found."
+    fi
+}
+
+list_servers() {
+    IFS=' ' read -ra SRV_ARR <<< "$SERVERS"
+    if [ ${#SRV_ARR[@]} -eq 0 ]; then
+        echo "No servers in config."
+        echo "Add with 'pingstat add <server>'"
+        return
+    fi
+    echo "Configured servers:"
+    for s in "${SRV_ARR[@]}"; do
+        echo "  $s => $(get_db_path "$s")"
+    done
+}
+
+###############################################################################
+# 7) Ping & Stats Functions
+###############################################################################
+check_internet() {
+    if ping -q -c 1 -W 3 8.8.8.8 >/dev/null 2>&1 || \
+       ping -q -c 1 -W 3 1.1.1.1 >/dev/null 2>&1; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+init_db() {
+    local dbfile="$1"
+    sqlite3 "$dbfile" <<EOF
+CREATE TABLE IF NOT EXISTS ping_data (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    min REAL,
+    avg REAL,
+    max REAL,
+    mdev REAL,
+    loss REAL
+);
+EOF
+}
+
+do_ping_one() {
+    local srv="$1"
+    local dbfile
+    dbfile="$(get_db_path "$srv")"
+    init_db "$dbfile"
+
+    local PING_OUTPUT
+    PING_OUTPUT=$(ping -c 4 "$srv" 2>&1)
+    local PACKET_LINE
+    PACKET_LINE=$(echo "$PING_OUTPUT" | grep "packets transmitted")
+
+    local LOSS MIN AVG MAX MDEV
+    if [ -z "$PACKET_LINE" ]; then
+        LOSS=100 MIN="NULL" AVG="NULL" MAX="NULL" MDEV="NULL"
+    else
+        local PACKETS_TX
+        local PACKETS_RX
+        PACKETS_TX=$(echo "$PACKET_LINE" | awk '{print $1}')
+        PACKETS_RX=$(echo "$PACKET_LINE" | awk '{print $4}')
+        LOSS=$(awk "BEGIN {print (1 - $PACKETS_RX/$PACKETS_TX) * 100}")
+
+        local RTT_LINE
+        RTT_LINE=$(echo "$PING_OUTPUT" | grep "rtt min/avg/max/mdev")
+        if [ -n "$RTT_LINE" ]; then
+            IFS='/' read -r MIN AVG MAX MDEV <<< "$(echo "$RTT_LINE" | sed 's/^.*= //; s/ ms$//')"
+        else
+            MIN="NULL" AVG="NULL" MAX="NULL" MDEV="NULL"
+        fi
+    fi
+
+    sqlite3 "$dbfile" <<EOF
+INSERT INTO ping_data(min, avg, max, mdev, loss)
+VALUES ($MIN, $AVG, $MAX, $MDEV, $LOSS);
+EOF
+
+    echo "Pinged $srv -> min=$MIN avg=$AVG max=$MAX mdev=$MDEV loss=${LOSS}% -> $dbfile"
+}
+
+do_ping_all() {
+    if ! check_internet; then
+        echo "No internet connection. Skipping pings."
+        return
+    fi
+
+    if [ -n "$SINGLE_SERVER" ]; then
+        do_ping_one "$SINGLE_SERVER"
+    else
+        IFS=' ' read -ra SRV_ARR <<< "$SERVERS"
+        if [ ${#SRV_ARR[@]} -eq 0 ]; then
+            echo "No servers in config."
+            echo "Add with 'pingstat add <server>'"
+            return
+        fi
+        for s in "${SRV_ARR[@]}"; do
+            do_ping_one "$s"
+        done
+    fi
+}
+
+show_daily() {
+    local limit="$1"
+    [ -z "$limit" ] && limit=20
+
+    if [ -n "$SINGLE_SERVER" ]; then
+        server_in_list "$SINGLE_SERVER" || { echo "Server '$SINGLE_SERVER' not in config."; return; }
+        do_show_daily "$SINGLE_SERVER" "$limit"
+    else
+        IFS=' ' read -ra SRV_ARR <<< "$SERVERS"
+        [ ${#SRV_ARR[@]} -eq 0 ] && echo "No servers in config." && echo "Add with 'pingstat add <server>'" && return
+        for s in "${SRV_ARR[@]}"; do
+            do_show_daily "$s" "$limit"
+            echo
+        done
+    fi
+}
+
+do_show_daily() {
+    local srv="$1"
+    local limit="$2"
+    local dbfile
+    dbfile="$(get_db_path "$srv")"
+    init_db "$dbfile"
+
+    echo "----- Daily stats for '$srv' (last $limit days) -----"
+    echo ""
+    sqlite3 -header -column "$dbfile" <<EOF
+SELECT
+    date(timestamp) AS day,
+    printf('%.3f', MIN(min)) AS abs_min,
+    printf('%.3f', AVG(min)) AS avg_min,
+    printf('%.3f', AVG(avg)) AS avg_avg,
+    printf('%.3f', AVG(max)) AS avg_max,
+    printf('%.3f', MAX(max)) AS abs_max,
+    printf('%.1f%%', AVG(loss)) AS avg_loss,
+    CASE strftime('%w', timestamp)
+        WHEN '0' THEN 'Sunday'
+        WHEN '1' THEN 'Monday'
+        WHEN '2' THEN 'Tuesday'
+        WHEN '3' THEN 'Wednesday'
+        WHEN '4' THEN 'Thursday'
+        WHEN '5' THEN 'Friday'
+        WHEN '6' THEN 'Saturday'
+    END AS weekday,
+    COUNT(*) AS num_pings
+FROM ping_data
+GROUP BY day
+ORDER BY day DESC
+LIMIT $limit;
+EOF
+    echo "-------------------------------------------------------------------------------------"
+    echo ""
+    echo "Note: Times are in milliseconds (ms), and packet loss in %."
+}
+
+show_monthly() {
+    local limit="$1"
+    [ -z "$limit" ] && limit=12
+
+    if [ -n "$SINGLE_SERVER" ]; then
+        server_in_list "$SINGLE_SERVER" || { echo "Server '$SINGLE_SERVER' not in config."; return; }
+        do_show_monthly "$SINGLE_SERVER" "$limit"
+    else
+        IFS=' ' read -ra SRV_ARR <<< "$SERVERS"
+        [ ${#SRV_ARR[@]} -eq 0 ] && echo "No servers in config." && echo "Add with 'pingstat add <server>'"&& return
+        for s in "${SRV_ARR[@]}"; do
+            do_show_monthly "$s" "$limit"
+            echo
+        done
+    fi
+}
+
+do_show_monthly() {
+    local srv="$1"
+    local limit="$2"
+    local dbfile
+    dbfile="$(get_db_path "$srv")"
+    init_db "$dbfile"
+
+    echo "----- Monthly stats for '$srv' (last $limit months) -----"
+    echo ""
+    sqlite3 -header -column "$dbfile" <<EOF
+SELECT
+    strftime('%Y-%m', timestamp) AS month,
+    printf('%.3f', MIN(min)) AS abs_min,
+    printf('%.3f', AVG(min)) AS avg_min,
+    printf('%.3f', AVG(avg)) AS avg_avg,
+    printf('%.3f', AVG(max)) AS avg_max,
+    printf('%.3f', MAX(max)) AS abs_max,
+    printf('%.1f%%', AVG(loss)) AS avg_loss,
+    COUNT(*) AS num_pings
+FROM ping_data
+GROUP BY month
+ORDER BY month DESC
+LIMIT $limit;
+EOF
+    echo "-------------------------------------------------------------------------"
+    echo ""
+    echo "Note: Times are in milliseconds (ms), and packet loss in %."
+}
+
+###############################################################################
+# 8) Utility: check if a server is in the list
+###############################################################################
+server_in_list() {
+    local srv="$1"
+    IFS=' ' read -ra SRV_ARR <<< "$SERVERS"
+    for s in "${SRV_ARR[@]}"; do
+        [ "$s" = "$srv" ] && return 0
+    done
+    return 1
+}
+
+###############################################################################
+# 9) Main Execution
+###############################################################################
+read_config
+
+# If no arguments, show usage
+[ $# -eq 0 ] && usage && exit 0
+
+# Handle primary arguments
+case "$1" in
+    --version)
+        check_version
+        exit 0
+        ;;
+    --update)
+        update_pingstat
+        ;;
+    --uninstall)
+        uninstall_pingstat
+        ;;
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    add)
+        [ -z "$2" ] && { echo "Usage: pingstat add <server>"; exit 1; }
+        add_server "$2"
+        exit 0
+        ;;
+    remove)
+        [ -z "$2" ] && { echo "Usage: pingstat remove <server>"; exit 1; }
+        remove_server "$2"
+        exit 0
+        ;;
+    list)
+        list_servers
+        exit 0
+        ;;
+    -p)
+        ACTION="ping"
+        shift
+        ;;
+    -d)
+        ACTION="daily"
+        DAILY_LIMIT="$2"
+        if [[ "$2" =~ ^[0-9]+$ ]]; then
+            shift 2
+        else
+            shift
+        fi
+        ;;
+    -m)
+        ACTION="monthly"
+        MONTHLY_LIMIT="$2"
+        if [[ "$2" =~ ^[0-9]+$ ]]; then
+            shift 2
+        else
+            shift
+        fi
+        ;;
+    *)
+        # Unknown option or no further action
+        usage
+        exit 1
+        ;;
+esac
+
+# Parse optional -s <server>
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -s)
+            SINGLE_SERVER="$2"
+            shift 2
+            ;;
+        *)
+            # Any leftover unknown argument
+            shift
+            ;;
+    esac
+done
+
+# Execute the selected ACTION
+case "$ACTION" in
+    "ping")
+        do_ping_all
+        ;;
+    "daily")
+        show_daily "$DAILY_LIMIT"
+        ;;
+    "monthly")
+        show_monthly "$MONTHLY_LIMIT"
+        ;;
+    *)
+        usage
+        ;;
+esac

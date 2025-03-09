@@ -1,0 +1,154 @@
+# pingstat
+
+A lightweight, user-level script for multi-server ping logging, storing stats per server in user-writable SQLite databases.
+
+---
+
+## Example Output
+
+```bash
+pingstat -d
+```
+
+```bash
+----- Daily stats for 'yourdomain.tld' (last 20 days) -----
+
+day         abs_min  avg_min  avg_avg  avg_max  abs_max  avg_loss
+----------  -------  -------  -------  -------  -------  --------
+2025-03-01  0.060    0.110    0.146    0.183    0.223    0.0%    
+2025-02-28  0.060    0.085    0.136    0.184    0.229    0.0%    
+2025-02-27  0.056    0.063    0.093    0.135    0.168    0.0%    
+-----------------------------------------------------------------
+
+Note: Times are in milliseconds (ms), and packet loss in %.
+```
+
+### **Stat Definitions**
+- **abs_min** – absolute minimum (quickest response of the day).  
+- **avg_min** – average minimum ping over the day.  
+- **avg_avg** – average ping of all requests that day.  
+- **avg_max** – average of the maximum ping values recorded.  
+- **abs_max** – the absolute slowest response recorded.  
+- **avg_loss** – average packet loss percentage for the day.
+
+---
+
+## Features
+
+✅ **Manage multiple servers** (`add`, `remove`, `list`) without manually editing config files.  
+✅ **Log ping statistics** (`min/avg/max/mdev/loss`) into a dedicated SQLite `.db` file per server.  
+✅ **View historical stats** with daily (`-d`) or monthly (`-m`) aggregation.  
+✅ **Minimal dependencies** – requires only `bash`, `ping`, `sqlite3`, and `aws`.  
+✅ **Automate pings** using `cron` for long-term monitoring.  
+
+---
+
+## Installation
+
+### **System-wide Installation** (Requires `sudo`)
+
+```bash
+curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | sudo bash
+```
+
+This installs `pingstat` in `/usr/bin/`, making it available to all users.
+
+### **User-Level Installation** (No `sudo`)
+
+```bash
+curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | bash
+```
+*(Ensure `~/bin` is in your `$PATH` to run `pingstat` easily.)*
+
+### **Install a Specific Version** (e.g., `0.0.1`)
+
+```bash
+curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | sudo bash -s -- 0.0.1
+```
+
+---
+
+## Basic Usage
+
+```bash
+pingstat <command> [options]
+```
+
+### **Server Management**
+- `pingstat add <server>` → Add a server (e.g., `kernel.org`).  
+- `pingstat remove <server>` → Remove a server from the list.  
+- `pingstat list` → List all configured servers.  
+
+### **Ping & Stats**
+- `pingstat -p` → Ping all servers (or use `-s <server>` for one).  
+- `pingstat -d [N]` → Show daily stats for the last `N` days (default: 20).  
+- `pingstat -m [N]` → Show monthly stats for the last `N` months (default: 12).  
+- `pingstat -s <server>` → Apply `-p`, `-d`, or `-m` to a specific server.  
+
+### **Examples**
+```bash
+pingstat add kernel.org
+pingstat add gnu.org
+pingstat list
+```
+
+```bash
+pingstat -p        # Ping all servers
+pingstat -p -s gnu.org  # Ping only gnu.org
+pingstat -d 5      # Show last 5 days' stats
+pingstat -d 5 -s gnu.org  # Last 5 days for gnu.org only
+pingstat remove gnu.org  # Remove gnu.org from the list
+```
+
+---
+
+## Automating with Cron
+
+To ping **all** servers every **5 minutes**, edit your crontab (`crontab -e`) and add:
+
+```cron
+*/5 * * * * pingstat -p
+```
+
+For a single server:
+
+```cron
+*/5 * * * * pingstat -p -s kernel.org
+```
+
+---
+
+## Updating
+
+To update to the latest version:
+
+```bash
+pingstat --update
+```
+
+Or manually by running install script as described above.
+
+---
+
+## Uninstalling
+
+To remove `pingstat`, run:
+
+```bash
+pingstat --uninstall
+```
+
+Or manually remove:
+
+```bash
+sudo rm /usr/bin/pingstat  # System-wide install
+rm -rf ~/.config/pingstat        # User config
+rm -rf ~/.local/share/pingstat   # User data
+```
+*(Adjust paths if you installed locally.)*
+
+---
+
+## License
+
+Licensed under [MIT](LICENSE).

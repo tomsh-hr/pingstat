@@ -1,0 +1,181 @@
+#!/bin/bash
+#
+# install.sh - Install pingstat.
+#
+
+dependencies=(ping sqlite3 awk)
+missing_deps=()
+
+# Check for required dependencies
+for dep in "${dependencies[@]}"; do
+  if ! command -v "$dep" >/dev/null 2>&1; then
+    missing_deps+=("$dep")
+  fi
+done
+
+# Ensure at least one download tool is available
+if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+  missing_deps+=("curl or wget")
+fi
+
+if [ ${#missing_deps[@]} -gt 0 ]; then
+  echo "ERROR: The following dependencies are missing: ${missing_deps[*]}"
+  echo "Please install them before proceeding."
+  echo ""
+  echo "For Debian/Ubuntu:   sudo apt install ${missing_deps[*]}"
+  echo "For Arch Linux:      sudo pacman -S ${missing_deps[*]}"
+  echo "For Fedora:          sudo dnf install ${missing_deps[*]}"
+  echo "For Alpine:          sudo apk add ${missing_deps[*]}"
+  exit 1
+fi
+
+# Set installation paths
+if [ "$EUID" -eq 0 ]; then
+  BIN_DEST="/usr/bin/pingstat"
+  VERSION_DEST="/usr/share/pingstat/VERSION"
+else
+  BIN_DEST="$HOME/bin/pingstat"
+  VERSION_DEST="$HOME/.local/share/pingstat/VERSION"
+fi
+
+echo "Installing pingstat..."
+echo ""
+
+BIN_DIR=$(dirname "$BIN_DEST")
+
+# Ensure we use an absolute path for the installation directory
+BIN_DIR=$(realpath -m "$BIN_DIR")
+
+# Ensure the install directory is valid and writable
+if [ ! -d "$BIN_DIR" ]; then
+    echo "The installation directory '$BIN_DIR' does not exist."
+    
+    while true; do
+        read -p "Do you want to create it? (Y/n) " create_dir
+        case "$create_dir" in
+            [Yy]*|"") 
+                mkdir -p "$BIN_DIR" 2>/dev/null
+                if [ $? -ne 0 ]; then
+                    echo "ERROR: Could not create '$BIN_DIR'. You may not have permission."
+                else
+                    echo "Created directory: $BIN_DIR"
+                    break
+                fi
+                ;;
+            [Nn]*) 
+                echo "Specify a different install path or type 'quit' to exit."
+                while true; do
+                    read -p "Enter a new absolute install path (or type 'quit' to cancel): " NEW_PATH
+                    if [[ "$NEW_PATH" == "quit" ]]; then
+                        echo "Installation aborted."
+                        exit 1
+                    elif [[ ! "$NEW_PATH" =~ ^/ ]]; then
+                        echo "ERROR: Please enter an absolute path (it must start with '/')."
+                    elif [ ! -w "$(dirname "$NEW_PATH")" ]; then
+                        echo "ERROR: You do not have permission to install to '$NEW_PATH'. Try another location."
+                    else
+                        BIN_DEST="$NEW_PATH/pingstat"
+                        BIN_DIR="$NEW_PATH"
+                        mkdir -p "$BIN_DIR" 2>/dev/null
+                        if [ $? -ne 0 ]; then
+                            echo "ERROR: Could not create '$BIN_DIR'. You may not have permission."
+                        else
+                            echo "Installing to: $BIN_DIR"
+                            break 2  # Exit both loops
+                        fi
+                    fi
+                done
+                ;;
+            *) echo "Invalid choice. Enter 'Y' to create, 'N' to specify another path, or 'quit' to exit." ;;
+        esac
+    done
+fi
+
+# Ensure the provided install directory is writable
+if [ ! -w "$BIN_DIR" ]; then
+    echo "ERROR: You do not have permission to install to '$BIN_DIR'."
+    if [ "$EUID" -ne 0 ]; then
+        echo "Try running the script with sudo:"
+        echo "  sudo bash install.sh"
+    fi
+    exit 1
+fi
+
+mkdir -p "$(dirname "$VERSION_DEST")"
+
+# Allow user to install a specific version
+VERSION="${1:-main}"
+if [ "$VERSION" == "main" ]; then
+    BASE_URL="https://codeberg.org/tomsh/pingstat/raw/branch/main"
+else
+    BASE_URL="https://codeberg.org/tomsh/pingstat/raw/tag/$VERSION"
+fi
+
+SCRIPT_URL="$BASE_URL/pingstat"
+VERSION_URL="$BASE_URL/VERSION"
+
+# Download using either curl or wget
+download_file() {
+    local url="$1"
+    local dest="$2"
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -sL "$url" -o "$dest"
+    else
+        wget -qO "$dest" "$url"
+    fi
+}
+
+echo "Downloading pingstat..."
+if ! download_file "$SCRIPT_URL" "$BIN_DEST"; then
+    echo "Error: Failed to download pingstat."
+    exit 1
+fi
+chmod +x "$BIN_DEST"
+
+echo "Downloading VERSION file..."
+if ! download_file "$VERSION_URL" "$VERSION_DEST"; then
+    echo "Error: Failed to install VERSION file."
+    exit 1
+fi
+
+if [ "$EUID" -eq 0 ]; then
+    chmod 644 "$VERSION_DEST"
+fi
+
+# Check if the install directory is in PATH
+if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+    echo ""
+    echo "WARNING: $BIN_DIR is not in your PATH."
+    while true; do
+        read -p "Do you want to add it to your PATH automatically? (Y/n) " add_to_path
+        case "$add_to_path" in
+            [Yy]*|"") 
+                SHELL_TYPE=$(basename "$SHELL")
+                if [[ "$SHELL_TYPE" == "bash" ]]; then
+                    echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$HOME/.bashrc"
+                    echo "Added to ~/.bashrc. Run 'source ~/.bashrc' to apply changes."
+                elif [[ "$SHELL_TYPE" == "zsh" ]]; then
+                    echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$HOME/.zshrc"
+                    echo "Added to ~/.zshrc. Run 'source ~/.zshrc' to apply changes."
+                elif [[ "$SHELL_TYPE" == "fish" ]]; then
+                    set fish_user_paths "$BIN_DIR" $fish_user_paths
+                    echo "set -U fish_user_paths \"$BIN_DIR\" \$fish_user_paths" >> "$HOME/.config/fish/config.fish"
+                    echo "Added to Fish shell. Restart terminal to apply changes."
+                else
+                    echo "Unknown shell: $SHELL_TYPE. Add manually:"
+                    echo "  export PATH=\"$BIN_DIR:\$PATH\""
+                fi
+                break
+                ;;
+            [Nn]*) 
+                echo "To run pingstat manually, use:"
+                echo "  $BIN_DEST"
+                break
+                ;;
+            *) echo "Invalid choice. Please enter 'Y' to add, or 'N' to skip." ;;
+        esac
+    done
+fi
+
+echo "Installation complete!"
