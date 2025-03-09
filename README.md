@@ -11,25 +11,34 @@ pingstat -d
 ```
 
 ```bash
------ Daily stats for 'yourdomain.tld' (last 20 days) -----
-
-day         abs_min  avg_min  avg_avg  avg_max  abs_max  avg_loss
-----------  -------  -------  -------  -------  -------  --------
-2025-03-01  0.060    0.110    0.146    0.183    0.223    0.0%    
-2025-02-28  0.060    0.085    0.136    0.184    0.229    0.0%    
-2025-02-27  0.056    0.063    0.093    0.135    0.168    0.0%    
------------------------------------------------------------------
+day         abs_min  avg_min  avg_avg  avg_max  abs_max  avg_loss  weekday    num_pings
+----------  -------  -------  -------  -------  -------  --------  ---------  ---------
+2025-03-09  0.056    0.083    0.133    0.183    1.171    0.0%      Sunday     56       
+2025-03-08  0.052    0.084    0.132    0.182    0.323    0.0%      Saturday   96       
+2025-03-07  0.055    0.096    0.146    0.188    0.265    8.3%      Friday     96       
+2025-03-06  0.053    0.073    0.104    0.135    0.237    3.2%      Thursday   94       
+2025-03-05  0.055    0.084    0.128    0.167    0.235    0.0%      Wednesday  96       
+2025-03-04  0.056    0.090    0.138    0.191    1.111    1.0%      Tuesday    96       
+2025-03-03  0.054    0.097    0.142    0.183    0.231    5.4%      Monday     37       
+2025-03-02  0.058    0.079    0.124    0.179    0.316    12.5%     Sunday     24       
+2025-03-01  0.059    0.087    0.132    0.174    0.223    4.2%      Saturday   24       
+2025-02-28  0.060    0.085    0.136    0.184    0.229    0.0%      Friday     28       
+2025-02-27  0.056    0.063    0.093    0.135    0.168    0.0%      Thursday   4        
+-------------------------------------------------------------------------------------
 
 Note: Times are in milliseconds (ms), and packet loss in %.
 ```
 
 ### **Stat Definitions**
-- **abs_min** – absolute minimum (quickest response of the day).  
-- **avg_min** – average minimum ping over the day.  
-- **avg_avg** – average ping of all requests that day.  
-- **avg_max** – average of the maximum ping values recorded.  
-- **abs_max** – the absolute slowest response recorded.  
-- **avg_loss** – average packet loss percentage for the day.
+
+- **abs_min** – absolute minimum (quickest response of the day/month).
+- **avg_min** – average minimum ping over the day.
+- **avg_avg** – average ping of all requests for that day.
+- **avg_max** – average of the maximum ping values recorded.
+- **abs_max** – absolute maximum (the slowest response recorded).
+- **avg_loss** – average packet loss percentage for the day/month.
+- **weekday** – day of the week (only for the -d flag).
+- **num_pings** – number of pings for the day/month.
 
 ---
 
@@ -60,7 +69,7 @@ curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | bash
 ```
 *(Ensure `~/bin` is in your `$PATH` to run `pingstat` easily.)*
 
-### **Install a Specific Version** (e.g., `0.0.1`)
+### **Install a Specific Version** (e.g., `1.0.0`)
 
 ```bash
 curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | sudo bash -s -- 0.0.1
