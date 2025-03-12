@@ -57,12 +57,23 @@ Note: Times are in milliseconds (ms), and packet loss in %.
 ### **System-wide Installation** (Requires `sudo`)
 
 ```bash
+wget -qO- "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | sudo bash
+```
+or (if you prefer curl):
+
+```bash
 curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | sudo bash
 ```
 
 This installs `pingstat` in `/usr/bin/`, making it available to all users.
 
 ### **User-Level Installation** (No `sudo`)
+
+```bash
+wget -qO- "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | bash
+```
+
+or:
 
 ```bash
 curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | bash
@@ -72,7 +83,13 @@ curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | bash
 ### **Install a Specific Version** (e.g., `1.0.0`)
 
 ```bash
-curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | sudo bash -s -- 0.0.1
+wget -qO- "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | sudo bash -s -- 1.0.0
+```
+
+or:
+
+```bash
+curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | sudo bash -s -- 1.0.0
 ```
 
 ---
