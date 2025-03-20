@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
 # If running as root, warn and exit
 if [[ $EUID -eq 0 ]]; then
@@ -10,7 +11,7 @@ fi
 ###############################################################################
 # 1) Configuration Paths & Global Variables
 ###############################################################################
-VERSION="1.0.1"
+VERSION="1.1.0"
 SCRIPT_PATH=$(realpath "$0" 2>/dev/null || command -v pingstat)
 
 # XDG-based config & data paths
@@ -97,8 +98,9 @@ uninstall_pingstat() {
     echo "Uninstalling pingstat..."
 
     # Determine if sudo is needed (only for system-wide installs)
-    USE_SUDO=""
-    if [[ -f "$SCRIPT_PATH" && ($(stat -c "%U" "$SCRIPT_PATH" 2>/dev/null) == "root" || "$SCRIPT_PATH" =~ ^/usr/bin/) ]]; then
+    if [ -w "$SCRIPT_PATH" ]; then
+        USE_SUDO=""
+    else
         USE_SUDO="sudo"
     fi
 

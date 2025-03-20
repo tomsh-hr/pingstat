@@ -1,7 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # install.sh - Install pingstat.
 #
+
+set -euo pipefail
 
 dependencies=(ping sqlite3 awk)
 missing_deps=()
@@ -141,12 +143,12 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
                     BASHRC="$HOME/.bashrc"
                     LINE="export PATH=\"$BIN_DIR:\$PATH\""
                     grep -qxF "$LINE" "$BASHRC" || echo "$LINE" >> "$BASHRC"
-                    echo "Added to $BASHRC. Run 'source $BASHRC' to apply changes."
+                    echo "Added to $BASHRC. Run 'source $BASHRC' or restart terminal to apply changes."
                 elif [[ "$SHELL_TYPE" == "zsh" ]]; then
                     ZSHRC="$HOME/.zshrc"
                     LINE="export PATH=\"$BIN_DIR:\$PATH\""
                     grep -qxF "$LINE" "$ZSHRC" || echo "$LINE" >> "$ZSHRC"
-                    echo "Added to $ZSHRC. Run 'source $ZSHRC' to apply changes."
+                    echo "Added to $ZSHRC. Run 'source $ZSHRC' or restart terminal to apply changes"
                 elif [[ "$SHELL_TYPE" == "fish" ]]; then
                     FISH_CONFIG="$HOME/.config/fish/config.fish"
                     mkdir -p "$(dirname "$FISH_CONFIG")"
