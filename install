@@ -32,10 +32,8 @@ fi
 # Set installation paths
 if [ "$EUID" -eq 0 ]; then
   BIN_DEST="/usr/bin/pingstat"
-  VERSION_DEST="/usr/share/pingstat/VERSION"
 else
   BIN_DEST="$HOME/bin/pingstat"
-  VERSION_DEST="$HOME/.local/share/pingstat/VERSION"
 fi
 
 echo "Installing pingstat..."
@@ -101,8 +99,6 @@ if [ ! -w "$BIN_DIR" ]; then
     exit 1
 fi
 
-mkdir -p "$(dirname "$VERSION_DEST")"
-
 # Allow user to install a specific version
 VERSION="${1:-main}"
 if [ "$VERSION" == "main" ]; then
@@ -112,7 +108,6 @@ else
 fi
 
 SCRIPT_URL="$BASE_URL/pingstat"
-VERSION_URL="$BASE_URL/VERSION"
 
 # Download using either curl or wget
 download_file() {
@@ -133,16 +128,6 @@ if ! download_file "$SCRIPT_URL" "$BIN_DEST"; then
 fi
 chmod +x "$BIN_DEST"
 
-echo "Downloading VERSION file..."
-if ! download_file "$VERSION_URL" "$VERSION_DEST"; then
-    echo "Error: Failed to install VERSION file."
-    exit 1
-fi
-
-if [ "$EUID" -eq 0 ]; then
-    chmod 644 "$VERSION_DEST"
-fi
-
 # Check if the install directory is in PATH
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     echo ""
@@ -153,15 +138,25 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
             [Yy]*|"") 
                 SHELL_TYPE=$(basename "$SHELL")
                 if [[ "$SHELL_TYPE" == "bash" ]]; then
-                    echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$HOME/.bashrc"
-                    echo "Added to ~/.bashrc. Run 'source ~/.bashrc' to apply changes."
+                    BASHRC="$HOME/.bashrc"
+                    LINE="export PATH=\"$BIN_DIR:\$PATH\""
+                    grep -qxF "$LINE" "$BASHRC" || echo "$LINE" >> "$BASHRC"
+                    echo "Added to $BASHRC. Run 'source $BASHRC' to apply changes."
                 elif [[ "$SHELL_TYPE" == "zsh" ]]; then
-                    echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$HOME/.zshrc"
-                    echo "Added to ~/.zshrc. Run 'source ~/.zshrc' to apply changes."
+                    ZSHRC="$HOME/.zshrc"
+                    LINE="export PATH=\"$BIN_DIR:\$PATH\""
+                    grep -qxF "$LINE" "$ZSHRC" || echo "$LINE" >> "$ZSHRC"
+                    echo "Added to $ZSHRC. Run 'source $ZSHRC' to apply changes."
                 elif [[ "$SHELL_TYPE" == "fish" ]]; then
-                    set fish_user_paths "$BIN_DIR" $fish_user_paths
-                    echo "set -U fish_user_paths \"$BIN_DIR\" \$fish_user_paths" >> "$HOME/.config/fish/config.fish"
-                    echo "Added to Fish shell. Restart terminal to apply changes."
+                    FISH_CONFIG="$HOME/.config/fish/config.fish"
+                    mkdir -p "$(dirname "$FISH_CONFIG")"
+                    touch "$FISH_CONFIG"
+                    FISH_LINE="set -U fish_user_paths $BIN_DIR \$fish_user_paths"
+                    
+                    # Only add if it's not already in config.fish
+                    grep -qxF "$FISH_LINE" "$FISH_CONFIG" || echo "$FISH_LINE" >> "$FISH_CONFIG"
+                    
+                    echo "Added to Fish shell config. Restart terminal or run 'source $FISH_CONFIG'."
                 else
                     echo "Unknown shell: $SHELL_TYPE. Add manually:"
                     echo "  export PATH=\"$BIN_DIR:\$PATH\""
@@ -178,4 +173,8 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     done
 fi
 
-echo "Installation complete!"
+VERSION_INSTALLED=$(grep -E '^VERSION=' "$BIN_DEST" 2>/dev/null | cut -d= -f2 | tr -d '"')
+[ -z "$VERSION_INSTALLED" ] && VERSION_INSTALLED="(unknown)"
+echo "Installed pingstat version: $VERSION_INSTALLED"
+echo ""
+echo "Try it out: pingstat --help"

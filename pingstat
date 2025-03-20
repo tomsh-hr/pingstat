@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # If running as root, warn and exit
 if [[ $EUID -eq 0 ]]; then
@@ -10,29 +10,8 @@ fi
 ###############################################################################
 # 1) Configuration Paths & Global Variables
 ###############################################################################
+VERSION="1.0.1"
 SCRIPT_PATH=$(realpath "$0" 2>/dev/null || command -v pingstat)
-
-# Define possible version locations
-VERSION_PATHS=(
-    "$HOME/.local/share/pingstat/VERSION"
-    "/usr/share/pingstat/VERSION"
-)
-
-# Determine the current installed version
-for path in "${VERSION_PATHS[@]}"; do
-    if [[ -f "$path" ]]; then
-        VERSION=$(cat "$path" 2>/dev/null)
-        VERSION_PATH="$path"
-        break
-    fi
-done
-
-# If no version was found, warn the user
-if [[ -z "$VERSION" ]]; then
-    echo "WARNING: Unable to determine the installed version."
-    echo "Try running: pingstat --update"
-    VERSION="unknown"
-fi
 
 # XDG-based config & data paths
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/pingstat"
@@ -44,9 +23,9 @@ mkdir -p "$CONFIG_DIR" "$DATA_DIR"
 
 # Latest version from remote
 if command -v curl >/dev/null 2>&1; then
-    LATEST_VERSION=$(curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/VERSION")
+    LATEST_VERSION=$(curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/pingstat" | grep -E '^VERSION=' | cut -d= -f2 | tr -d '"')
 else
-    LATEST_VERSION=$(wget -qO- "https://codeberg.org/tomsh/pingstat/raw/branch/main/VERSION")
+    LATEST_VERSION=$(wget -qO- "https://codeberg.org/tomsh/pingstat/raw/branch/main/pingstat" | grep -E '^VERSION=' | cut -d= -f2 | tr -d '"')
 fi
 
 ###############################################################################
@@ -54,7 +33,14 @@ fi
 ###############################################################################
 check_version() {
     echo "Current version: $VERSION"
-    if [ "$VERSION" != "$LATEST_VERSION" ]; then
+
+    if [ -z "$LATEST_VERSION" ]; then
+        echo "WARNING: Unable to determine the latest avaible version."
+        echo "Check your internet connection or the remote script structure."
+        return
+    fi
+
+    if [ "$(printf '%s\n' "$LATEST_VERSION" "$VERSION" | sort -V | head -n1)" != "$LATEST_VERSION" ]; then
         echo "New version available: $LATEST_VERSION"
         echo "Run: 'pingstat --update' to update."
     else
@@ -63,38 +49,40 @@ check_version() {
 }
 
 update_pingstat() {
-    if [ "$VERSION" != "$LATEST_VERSION" ]; then
+    if [ -z "$LATEST_VERSION" ] && [ "$FORCE" != true ]; then
+        echo "ERROR: Unable to determine the latest avaible version."
+        echo "Check your internet connection or the remote script content."
+        exit 1
+    fi
+    
+    if [ "$(printf '%s\n' "$LATEST_VERSION" "$VERSION" | sort -V | head -n1)" != "$LATEST_VERSION" ] || [ "$FORCE" = true ]; then
         echo "Updating to version $LATEST_VERSION..."
 
         # Detect installation type (system-wide or local)
-        if [[ "$SCRIPT_PATH" =~ ^/usr/bin/ ]]; then
-            VERSION_DEST="/usr/share/pingstat/VERSION"
-            USE_SUDO="sudo"
-        else
-            VERSION_DEST="$HOME/.local/share/pingstat/VERSION"
+        if [ -w "$SCRIPT_PATH" ]; then
             USE_SUDO=""
+        else
+            USE_SUDO="sudo"
         fi
 
         echo "Updating binary at: $SCRIPT_PATH"
 
-        # Download and replace the binary
+        TMPFILE=$(mktemp)
         if command -v curl >/dev/null 2>&1; then
-            $USE_SUDO curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/pingstat" -o "$SCRIPT_PATH"
+            curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/pingstat" -o "$TMPFILE"
         else
-            $USE_SUDO wget -qO "$SCRIPT_PATH" "https://codeberg.org/tomsh/pingstat/raw/branch/main/pingstat"
+            wget -qO "$TMPFILE" "https://codeberg.org/tomsh/pingstat/raw/branch/main/pingstat"
         fi
-        $USE_SUDO chmod +x "$SCRIPT_PATH"
-
-        # Download the latest version file
-        if command -v curl >/dev/null 2>&1; then
-            $USE_SUDO curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/VERSION" -o "$VERSION_DEST"
+        
+        if grep -q '^VERSION=' "$TMPFILE"; then
+            $USE_SUDO cp "$TMPFILE" "$SCRIPT_PATH"
+            $USE_SUDO chmod +x "$SCRIPT_PATH"
+            echo "Update complete! Running version: $LATEST_VERSION"
         else
-            $USE_SUDO wget -qO "$VERSION_DEST" "https://codeberg.org/tomsh/pingstat/raw/branch/main/VERSION"
+            echo "ERROR: Downloaded file does not appear to be a valid pingstat script."
         fi
-
-        # Reload the new version info
-        VERSION=$(cat "$VERSION_DEST" 2>/dev/null || echo "unknown")
-        echo "Update complete! Running version: $VERSION"
+        
+        rm -f "$TMPFILE"
         exit 0
     else
         echo "You are already running the latest version!"
@@ -116,10 +104,6 @@ uninstall_pingstat() {
 
     # Remove binary
     [ -f "$SCRIPT_PATH" ] && $USE_SUDO rm -f "$SCRIPT_PATH" && echo "Removed $SCRIPT_PATH"
-
-    for VERSION in "${VERSION_PATHS[@]}"; do
-        [ -f "$VERSION" ] && $USE_SUDO rm -f "$VERSION" && echo "Removed $VERSION"
-    done
 
     # Remove config & data directories
     [ -d "$CONFIG_DIR" ] && rm -rf "$CONFIG_DIR" && echo "Removed $CONFIG_DIR"
@@ -150,6 +134,7 @@ Ping & Stats:
 Other Options:
   --version            Show current version.
   --update             Update pingstat if a new version is available.
+  --force-update       Always updates no matter what
   --uninstall          Uninstall pingstat entirely.
   -h, --help           Show this help message.
 EOF
@@ -479,6 +464,11 @@ case "$1" in
         exit 0
         ;;
     --update)
+        FORCE=false
+        update_pingstat
+        ;;
+    --force-update)
+        FORCE=true
         update_pingstat
         ;;
     --uninstall)
