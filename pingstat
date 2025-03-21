@@ -22,21 +22,37 @@ CONFIG_FILE="$CONFIG_DIR/servers.conf"
 # Ensure directories exist
 mkdir -p "$CONFIG_DIR" "$DATA_DIR"
 
-# Latest version from remote
-if command -v curl >/dev/null 2>&1; then
-    LATEST_VERSION=$(curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/pingstat" | grep -E '^VERSION=' | cut -d= -f2 | tr -d '"')
-else
-    LATEST_VERSION=$(wget -qO- "https://codeberg.org/tomsh/pingstat/raw/branch/main/pingstat" | grep -E '^VERSION=' | cut -d= -f2 | tr -d '"')
-fi
-
 ###############################################################################
 # 2) Version Checking & Update
 ###############################################################################
+get_latest_version() {
+    local url="https://codeberg.org/tomsh/pingstat/raw/branch/main/pingstat"
+    local version_line
+
+    if command -v curl >/dev/null 2>&1; then
+        version_line=$(curl -fsL "$url" | grep -E '^VERSION=' || true)
+    else
+        version_line=$(wget -qO- "$url" | grep -E '^VERSION=' || true)
+    fi
+
+    if [[ -z "$version_line" ]]; then
+        echo ""
+        return 1
+    fi
+
+    echo "$version_line" | cut -d= -f2 | tr -d '"'
+}
+
+# Latest version from remote
+if ! LATEST_VERSION=$(get_latest_version); then
+    LATEST_VERSION="unknown"
+fi
+
 check_version() {
     echo "Current version: $VERSION"
 
     if [ -z "$LATEST_VERSION" ]; then
-        echo "WARNING: Unable to determine the latest avaible version."
+        echo "WARNING: Unable to determine the latest available version."
         echo "Check your internet connection or the remote script structure."
         return
     fi
@@ -146,7 +162,12 @@ EOF
 # 5) Config Handling
 ###############################################################################
 read_config() {
-    [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE" 2>/dev/null
+    if [ -f "$CONFIG_FILE" ]; then
+        if ! source "$CONFIG_FILE" 2>/dev/null; then
+            echo "WARNING: Failed to read config file: $CONFIG_FILE"
+            echo "It may contain invalid syntax."
+        fi
+    fi
 }
 
 write_config() {
@@ -172,7 +193,7 @@ add_server() {
     for s in "${SRV_ARR[@]}"; do
         if [ "$s" = "$srv" ]; then
             echo "Server '$srv' is already in the config."
-            return
+            return 0
         fi
     done
 
@@ -200,7 +221,7 @@ add_server() {
                     ;;
                 [Cc]* )
                     echo "Addition cancelled."
-                    return
+                    return 1
                     ;;
                 * )
                     echo "Please answer A, N, or C."
@@ -215,6 +236,7 @@ add_server() {
     SERVERS="${SRV_ARR[*]}"
     write_config
     echo "Added server '$srv'."
+    return 0
 }
 
 remove_server() {
@@ -244,7 +266,7 @@ list_servers() {
     if [ ${#SRV_ARR[@]} -eq 0 ]; then
         echo "No servers in config."
         echo "Add with 'pingstat add <server>'"
-        return
+        return 1
     fi
     echo "Configured servers:"
     for s in "${SRV_ARR[@]}"; do
@@ -262,6 +284,36 @@ check_internet() {
     else
         return 1
     fi
+}
+
+check_server_exist() {
+    local server="$1"
+
+    if server_in_list "$server"; then
+        return 0  # Server is known, all good
+    fi
+
+    echo "Server '$server' is not in your config."
+    while true; do
+        read -p "Would you like to add it now? [Y/n] " choice
+        case "$choice" in
+            [Yy]*|"")
+                if add_server "$server"; then
+                    return 0  # Added successfully
+                else
+                    echo "Addition failed or cancelled. Skipping."
+                    return 1
+                fi
+                ;;
+            [Nn]*)
+                echo "Skipping."
+                return 1
+                ;;
+            *)
+                echo "Please answer yes or no."
+                ;;
+        esac
+    done
 }
 
 init_db() {
@@ -320,17 +372,20 @@ EOF
 do_ping_all() {
     if ! check_internet; then
         echo "No internet connection. Skipping pings."
-        return
+        return 1
     fi
 
     if [ -n "$SINGLE_SERVER" ]; then
+        if ! check_server_exist "$SINGLE_SERVER"; then
+            return 1
+        fi
         do_ping_one "$SINGLE_SERVER"
     else
         IFS=' ' read -ra SRV_ARR <<< "$SERVERS"
         if [ ${#SRV_ARR[@]} -eq 0 ]; then
             echo "No servers in config."
             echo "Add with 'pingstat add <server>'"
-            return
+            return 1
         fi
         for s in "${SRV_ARR[@]}"; do
             do_ping_one "$s"
@@ -343,11 +398,12 @@ show_daily() {
     [ -z "$limit" ] && limit=20
 
     if [ -n "$SINGLE_SERVER" ]; then
-        server_in_list "$SINGLE_SERVER" || { echo "Server '$SINGLE_SERVER' not in config."; return; }
+        #server_in_list "$SINGLE_SERVER" || { echo "Server '$SINGLE_SERVER' not in config."; return 1; }
+        if ! check_server_exist "$SINGLE_SERVER"; then return 1; fi
         do_show_daily "$SINGLE_SERVER" "$limit"
     else
         IFS=' ' read -ra SRV_ARR <<< "$SERVERS"
-        [ ${#SRV_ARR[@]} -eq 0 ] && echo "No servers in config." && echo "Add with 'pingstat add <server>'" && return
+        [ ${#SRV_ARR[@]} -eq 0 ] && echo "No servers in config." && echo "Add with 'pingstat add <server>'" && return 1
         for s in "${SRV_ARR[@]}"; do
             do_show_daily "$s" "$limit"
             echo
@@ -398,11 +454,12 @@ show_monthly() {
     [ -z "$limit" ] && limit=12
 
     if [ -n "$SINGLE_SERVER" ]; then
-        server_in_list "$SINGLE_SERVER" || { echo "Server '$SINGLE_SERVER' not in config."; return; }
+        #server_in_list "$SINGLE_SERVER" || { echo "Server '$SINGLE_SERVER' not in config."; return 1; }
+        if ! check_server_exist "$SINGLE_SERVER"; then return 1; fi
         do_show_monthly "$SINGLE_SERVER" "$limit"
     else
         IFS=' ' read -ra SRV_ARR <<< "$SERVERS"
-        [ ${#SRV_ARR[@]} -eq 0 ] && echo "No servers in config." && echo "Add with 'pingstat add <server>'"&& return
+        [ ${#SRV_ARR[@]} -eq 0 ] && echo "No servers in config." && echo "Add with 'pingstat add <server>'"&& return 1
         for s in "${SRV_ARR[@]}"; do
             do_show_monthly "$s" "$limit"
             echo
@@ -455,6 +512,8 @@ server_in_list() {
 # 9) Main Execution
 ###############################################################################
 read_config
+SERVERS="${SERVERS:-}"
+SINGLE_SERVER=""
 
 # If no arguments, show usage
 [ $# -eq 0 ] && usage && exit 0
@@ -486,7 +545,10 @@ case "$1" in
         exit 0
         ;;
     remove)
-        [ -z "$2" ] && { echo "Usage: pingstat remove <server>"; exit 1; }
+        if [ -z "${2:-}" ]; then
+            echo "Usage: pingstat remove <server>"
+            exit 1
+        fi
         remove_server "$2"
         exit 0
         ;;
@@ -500,19 +562,21 @@ case "$1" in
         ;;
     -d)
         ACTION="daily"
-        DAILY_LIMIT="$2"
-        if [[ "$2" =~ ^[0-9]+$ ]]; then
+        if [[ "${2:-}" =~ ^[0-9]+$ ]]; then
+            DAILY_LIMIT="$2"
             shift 2
         else
+            DAILY_LIMIT="20"
             shift
         fi
         ;;
     -m)
         ACTION="monthly"
-        MONTHLY_LIMIT="$2"
-        if [[ "$2" =~ ^[0-9]+$ ]]; then
+        if [[ "${2:-}" =~ ^[0-9]+$ ]]; then
+            MONTHLY_LIMIT="$2"
             shift 2
         else
+            MONTHLY_LIMIT="12"
             shift
         fi
         ;;

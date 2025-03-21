@@ -47,22 +47,22 @@ Note: Times are in milliseconds (ms), and packet loss in %.
 ✅ **Manage multiple servers** (`add`, `remove`, `list`) without manually editing config files.  
 ✅ **Log ping statistics** (`min/avg/max/mdev/loss`) into a dedicated SQLite `.db` file per server.  
 ✅ **View historical stats** with daily (`-d`) or monthly (`-m`) aggregation.  
-✅ **Minimal dependencies** – requires only `bash`, `ping`, `sqlite3`, and `aws`.  
+✅ **Minimal dependencies** – requires only `bash`, `ping`, `sqlite3`, and `curl` or `wget` (for install).  
 ✅ **Automate pings** using `cron` for long-term monitoring.  
 
 ---
 
 ## Installation
 
-### **System-wide Installation** (Requires `sudo`)
+### **System-wide Installation** (Requires `sudo` but only for installation!)
 
 ```bash
-wget -qO- "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | sudo bash
+wget -q "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" -O install.sh && sudo bash install.sh && rm install.sh
 ```
 or (if you prefer curl):
 
 ```bash
-curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | sudo bash
+curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" -o install.sh && sudo bash install.sh && rm install.sh
 ```
 
 This installs `pingstat` in `/usr/bin/`, making it available to all users.
@@ -70,26 +70,26 @@ This installs `pingstat` in `/usr/bin/`, making it available to all users.
 ### **User-Level Installation** (No `sudo`)
 
 ```bash
-wget -qO- "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | bash
+wget -q "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" -O install.sh && bash install.sh && rm install.sh
 ```
 
 or:
 
 ```bash
-curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | bash
+curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" -o install.sh && bash install.sh && rm install.sh
 ```
 *(Ensure `~/bin` is in your `$PATH` to run `pingstat` easily.)*
 
-### **Install a Specific Version** (e.g., `1.0.0`)
+### **Install a Specific Version** (e.g., `1.1.0`)
 
 ```bash
-wget -qO- "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | sudo bash -s -- 1.0.0
+wget -q "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" -O install.sh && sudo bash install.sh 1.1.0 && rm install.sh
 ```
 
 or:
 
 ```bash
-curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" | sudo bash -s -- 1.0.0
+curl -sL "https://codeberg.org/tomsh/pingstat/raw/branch/main/install" -o install.sh && sudo bash install.sh 1.1.0 && rm install.sh
 ```
 
 ---
@@ -174,6 +174,33 @@ rm -rf ~/.local/share/pingstat   # User data
 *(Adjust paths if you installed locally.)*
 
 ---
+## Troubleshooting
+
+### Script exits silently with no output?
+
+If you're using a custom config or modified version, ensure your config file is valid Bash syntax:
+
+```bash
+cat ~/.config/pingstat/servers.conf
+```
+A working config might look like:
+```bash
+SERVERS="kernel.org gnu.org"
+```
+If it's empty or corrupted, just delete it:
+```bash
+rm ~/.config/pingstat/servers.conf
+```
+If that doesn’t help, try reinstalling `pingstat` (this will not delete your current data):
+```bash
+pingstat --force-update
+```
+And if that still doesn’t help, there may be a bug in the script (oops — my fault 😅).
+As a quick workaround, you can comment out this line in the script:
+```bash
+set -euo pipefail
+```
+⚠️ Only do this if you know what you’re doing, and please open an issue so I can fix the root cause.
 
 ## License
 
